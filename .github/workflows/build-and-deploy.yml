@@ -82,7 +82,6 @@ jobs:
           changeCreationTimeOut: '3600'
           abortOnChangeCreationFailure: true
           abortOnChangeStepTimeout: true
-          deployment-gate: '{"environment": "production", "jobName": "Deploy"}'
 
   deploy:
     name: Deploy
