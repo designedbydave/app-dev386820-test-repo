@@ -14,6 +14,9 @@
 #   - Workflow `name` matches the file name (build-and-deploy).
 #   - Each job has a unique display `name`; the action's `job-name` equals its job's name.
 #   - Jobs run sequentially (change automation doesn't support parallel jobs).
+#   - The change model is passed explicitly (chg_model). With the deployment gate, ServiceNow
+#     rejected the change using only the model set on the pipeline step, because the type
+#     compatibility property is off (ServiceNow doc "DevOps change models").
 name: build-and-deploy
 
 on:
@@ -74,6 +77,7 @@ jobs:
               "setCloseCode": true,
               "autoCloseChange": true,
               "attributes": {
+                "chg_model": { "name": "DevOps Simplified" },
                 "short_description": "Deploy ${{ github.repository }} run ${{ github.run_number }} to production"
               }
             }
