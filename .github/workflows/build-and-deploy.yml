@@ -19,9 +19,11 @@
 #     compatibility property is off (ServiceNow doc "DevOps change models").
 name: build-and-deploy
 
+# Releases are cut by pushing a version tag (e.g. `git tag v1.2.0 && git push origin v1.2.0`).
+# Manual runs must also be started from a tag; runs from a branch skip every job.
 on:
   push:
-    branches: [main]
+    tags: ['v[0-9]+.[0-9]+.[0-9]+']
   workflow_dispatch:
 
 permissions:
@@ -30,10 +32,29 @@ permissions:
 jobs:
   build:
     name: Build
+    if: github.ref_type == 'tag'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v7
+        with:
+          fetch-depth: 0 # full history and tags, for the release checks below
+
+      # A release must be a newer version than every existing tag, and must point at a
+      # commit that is already on main.
+      - name: Check release tag
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          LATEST=$(git tag -l 'v[0-9]*.[0-9]*.[0-9]*' --sort=-v:refname | grep -vx "$TAG" | head -n1)
+          if [ -n "$LATEST" ] && [ "$(printf '%s\n%s\n' "$LATEST" "$TAG" | sort -V | tail -n1)" != "$TAG" ]; then
+            echo "::error::Tag $TAG is not newer than the latest release $LATEST"
+            exit 1
+          fi
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
+            echo "::error::Tag $TAG points at a commit that is not on main"
+            exit 1
+          fi
+          echo "Releasing $TAG (previous: ${LATEST:-none})"
 
       - name: Set up Node
         uses: actions/setup-node@v7
@@ -54,10 +75,10 @@ jobs:
           context-github: ${{ toJSON(github) }}
           job-name: 'Build'
           xml-report-filename: test-results
-          test-summary-name: 'Unit Tests - run ${{ github.run_number }}'
+          test-summary-name: 'Unit Tests - ${{ github.ref_name }}'
 
       - name: Build
-        run: echo "Building ${GITHUB_SHA::7} (run ${GITHUB_RUN_NUMBER})"
+        run: echo "Building ${GITHUB_REF_NAME} (${GITHUB_SHA::7})"
 
   change:
     name: ServiceNow Change
@@ -78,7 +99,7 @@ jobs:
               "autoCloseChange": true,
               "attributes": {
                 "chg_model": { "name": "DevOps Simplified" },
-                "short_description": "Deploy ${{ github.repository }} run ${{ github.run_number }} to production"
+                "short_description": "Deploy ${{ github.repository }} ${{ github.ref_name }} to production"
               }
             }
           interval: '100'
@@ -96,4 +117,4 @@ jobs:
       name: production
     steps:
       - name: Deploy
-        run: echo "Deploying ${GITHUB_SHA::7} (run ${GITHUB_RUN_NUMBER}) to production"
+        run: echo "Deploying ${GITHUB_REF_NAME} (${GITHUB_SHA::7}) to production"
