@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+# Stops the server started by deploy-local.sh.
+set -euo pipefail
+
+PID_FILE="${RUNNER_TEMP:-/tmp}/site.pid"
+if [[ -f "${PID_FILE}" ]]; then
+  kill "$(cat "${PID_FILE}")" 2> /dev/null || true
+  rm -f "${PID_FILE}"
+fi
