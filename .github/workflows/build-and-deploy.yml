@@ -1,0 +1,95 @@
+# Build ──► ServiceNow Change ──► Deploy
+#
+# Unit tests run in Build and are reported to ServiceNow as a JUnit test summary,
+# which shows on the change request for the run.
+#
+# Change gate (ServiceNow doc "GitHub Deployment Gates for ServiceNow DevOps Change"):
+#   - "ServiceNow Change" creates the change request. Because `deployment-gate` is set,
+#     the action doesn't wait for approval; it finishes once the change exists.
+#   - "Deploy" runs in the `production` environment, whose deployment protection rule
+#     is the ServiceNow GitHub App. GitHub holds the job until the change is approved
+#     and moved to Implement in ServiceNow.
+#
+# ServiceNow requirements:
+#   - Workflow `name` matches the file name (build-and-deploy).
+#   - Each job has a unique display `name`; the action's `job-name` equals its job's name.
+#   - Jobs run sequentially (change automation doesn't support parallel jobs).
+name: build-and-deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+
+      - name: Run unit tests
+        run: npm run test:ci
+
+      # Runs even when tests fail, so failed results still reach ServiceNow.
+      - name: ServiceNow DevOps Unit Test Results
+        if: always() && hashFiles('test-results/junit.xml') != ''
+        uses: ServiceNow/servicenow-devops-test-report@v7.1.0
+        with:
+          devops-integration-token: ${{ secrets.SN_DEVOPS_INTEGRATION_TOKEN }}
+          instance-url: ${{ secrets.SN_INSTANCE_URL }}
+          tool-id: ${{ secrets.SN_ORCHESTRATION_TOOL_ID }}
+          context-github: ${{ toJSON(github) }}
+          job-name: 'Build'
+          xml-report-filename: test-results
+          test-summary-name: 'Unit Tests - run ${{ github.run_number }}'
+
+      - name: Build
+        run: echo "Building ${GITHUB_SHA::7} (run ${GITHUB_RUN_NUMBER})"
+
+  change:
+    name: ServiceNow Change
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: ServiceNow Change
+        uses: ServiceNow/servicenow-devops-change@v7.1.0
+        with:
+          devops-integration-token: ${{ secrets.SN_DEVOPS_INTEGRATION_TOKEN }}
+          instance-url: ${{ secrets.SN_INSTANCE_URL }}
+          tool-id: ${{ secrets.SN_ORCHESTRATION_TOOL_ID }}
+          context-github: ${{ toJSON(github) }}
+          job-name: 'ServiceNow Change'
+          change-request: >-
+            {
+              "setCloseCode": true,
+              "autoCloseChange": true,
+              "attributes": {
+                "short_description": "Deploy ${{ github.repository }} run ${{ github.run_number }} to production"
+              }
+            }
+          interval: '100'
+          timeout: '3600'
+          changeCreationTimeOut: '3600'
+          abortOnChangeCreationFailure: true
+          abortOnChangeStepTimeout: true
+          deployment-gate: '{"environment": "production", "jobName": "Deploy"}'
+
+  deploy:
+    name: Deploy
+    needs: change
+    runs-on: ubuntu-latest
+    environment:
+      name: production
+    steps:
+      - name: Deploy
+        run: echo "Deploying ${GITHUB_SHA::7} (run ${GITHUB_RUN_NUMBER}) to production"
